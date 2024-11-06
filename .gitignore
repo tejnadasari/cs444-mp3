@@ -1,0 +1,9 @@
+cat > .gitignore << EOL
+.DS_Store
+.idea/
+__pycache__/
+*.pyc
+coco-animal/
+coco-animal.zip
+runs/
+EOL
