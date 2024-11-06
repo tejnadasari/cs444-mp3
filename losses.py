@@ -4,7 +4,7 @@ import torch.nn as nn
 from detection_utils import compute_bbox_targets
 
 class LossFunc(nn.Module):
-    def __init__(self, alpha=0.25, gamma=2.0):
+    def __init__(self, alpha=0.25, gamma=2.5):
         super(LossFunc, self).__init__()
         self.alpha = alpha
         self.gamma = gamma

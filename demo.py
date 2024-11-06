@@ -16,13 +16,14 @@ import time
 
 FLAGS = flags.FLAGS
 # Change these values in the flags definitions
-flags.DEFINE_float('lr', 1e-2, 'Learning Rate')  # Change from 1e-4 to 1e-2
+
+flags.DEFINE_integer('batch_size', 2, 'Batch Size')  # Changed from 1
+flags.DEFINE_float('lr', 2e-2, 'Learning Rate')
 flags.DEFINE_float('momentum', 0.9, 'Momentum for optimizer')
 flags.DEFINE_float('weight_decay', 1e-4, 'Weight Deacy for optimizer')
 flags.DEFINE_string('output_dir', 'runs/retina-net-basic/', 'Output Directory')
-flags.DEFINE_integer('batch_size', 1, 'Batch Size')
 flags.DEFINE_integer('seed', 2, 'Random seed')
-flags.DEFINE_integer('max_iter', 100000, 'Total Iterations')
+flags.DEFINE_integer('max_iter', 120000, 'Total Iterations')  # Changed from 100000
 flags.DEFINE_integer('val_every', 10000, 'Iterations interval to validate')
 flags.DEFINE_integer('save_every', 50000, 'Iterations interval to validate')
 flags.DEFINE_integer('preload_images', 1,
@@ -59,7 +60,12 @@ def main(_):
 
     dataset_train = CocoDataset('train', seed=FLAGS.seed,
                                 preload_images=FLAGS.preload_images > 0,
-                                transform=transforms.Compose([Normalizer(), Resizer()]))
+                                transform=transforms.Compose([
+                                    Normalizer(),
+                                    transforms.RandomHorizontalFlip(p=0.5),  # Added
+                                    transforms.ColorJitter(brightness=0.2, contrast=0.2),  # Added
+                                    Resizer()
+                                ]))
     dataset_val = CocoDataset('val', seed=0,
                               preload_images=FLAGS.preload_images > 0,
                               transform=transforms.Compose([Normalizer(), Resizer()]))
@@ -81,15 +87,14 @@ def main(_):
     # Create warmup scheduler and main scheduler
     warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
         optimizer,
-        start_factor=0.01,  # Start at 1% of base lr
-        end_factor=1.0,  # End at base lr
-        total_iters=2000  # Warm up over 2000 iterations
+        start_factor=0.001,  # Changed from 0.01
+        total_iters=4000  # Changed from 2000
     )
 
     main_scheduler = torch.optim.lr_scheduler.MultiStepLR(
         optimizer,
-        milestones=[60000, 80000],  # Original milestones
-        gamma=0.1
+        milestones=[40000, 80000, 100000],  # Modified milestones
+        gamma=0.2  # Changed from 0.1
     )
 
     scheduler = torch.optim.lr_scheduler.ChainedScheduler([
@@ -140,8 +145,7 @@ def main(_):
 
         total_loss.backward()
 
-        # Add gradient clipping
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0)
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)  # Changed from 10.0
 
         optimizer.step()
         optimizer.zero_grad()

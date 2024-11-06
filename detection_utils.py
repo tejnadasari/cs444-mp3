@@ -81,45 +81,35 @@ def compute_targets(anchor, cls, bbox):
     you can compute the max_ious for all the anchor boxes and then do gt_cls[max_iou < 0.4] = 0 to access all the anchor boxes that should be set to background and setting their gt_cls to 0. 
     This will remove the need for a for loop over all the anchor boxes. You can then do the same for the other cases. This will make your code much more efficient and faster to train.
     """
-    # TODO(student): Complete this function
-    # TEJNA
-    B = anchor.shape[0]  # batch size
-    A = anchor.shape[1]  # number of anchors
+    batch_size = anchor.shape[0]
+    num_anchors = anchor.shape[1]
 
-    # Initialize targets with same device as anchor and correct shape (B, A, 1)
-    gt_clss = torch.zeros((B, A, 1), dtype=torch.float, device=anchor.device)
-    gt_bboxes = torch.zeros((B, A, 4), device=anchor.device)
+    target_classes = torch.zeros((batch_size, num_anchors, 1), dtype=torch.float, device=anchor.device)
+    target_bboxes = torch.zeros((batch_size, num_anchors, 4), device=anchor.device)
 
-    for b in range(B):
-        # Skip if no objects in this image
-        if cls[b].numel() == 0:
+    for image_idx in range(batch_size):
+        if cls[image_idx].numel() == 0:
             continue
 
-        # Compute IoU between all anchors and all ground truth boxes
-        ious = compute_bbox_iou(anchor[b], bbox[b])  # Shape: (num_anchors, num_gt_boxes)
+        if cls[image_idx].numel() != 0:
+            ious = compute_bbox_iou(anchor[image_idx], bbox[image_idx])
+            max_ious, gt_bbox_idx = torch.max(ious, dim=1)
 
-        # Get maximum IoU and corresponding GT box index for each anchor
-        max_ious, max_idx = torch.max(ious, dim=1)  # Shape: (num_anchors,)
+            background_mask = max_ious < 0.4
+            target_classes[image_idx][background_mask, 0] = 0
 
-        # Assign targets based on IoU thresholds
-        # Background: IoU < 0.4
-        background_mask = max_ious < 0.4
-        gt_clss[b][background_mask, 0] = 0
+            ignore_mask = (max_ious >= 0.4) & (max_ious < 0.5)
+            target_classes[image_idx][ignore_mask, 0] = -1
 
-        # Ignore: 0.4 <= IoU < 0.5
-        ignore_mask = (max_ious >= 0.4) & (max_ious < 0.5)
-        gt_clss[b][ignore_mask, 0] = -1
+            positive_mask = max_ious >= 0.5
+            target_classes[image_idx][positive_mask, 0] = cls[image_idx][gt_bbox_idx[positive_mask]].float().squeeze(-1)
 
-        # Positive: IoU >= 0.5
-        positive_mask = max_ious >= 0.5
-        gt_clss[b][positive_mask, 0] = cls[b][max_idx[positive_mask]].float().squeeze(-1)
+            if positive_mask.any():
+                matched_bboxes = bbox[image_idx][gt_bbox_idx[positive_mask]]
+                target_bboxes[image_idx][positive_mask] = matched_bboxes
 
-        # Assign bbox targets only for positive anchors
-        if positive_mask.any():
-            matched_gt_boxes = bbox[b][max_idx[positive_mask]]
-            gt_bboxes[b][positive_mask] = matched_gt_boxes
+    return target_classes.to(torch.int), target_bboxes
 
-    return gt_clss.to(torch.int), gt_bboxes
 
 def compute_bbox_targets(anchors, gt_bboxes):
     """
@@ -144,36 +134,26 @@ def compute_bbox_targets(anchors, gt_bboxes):
        delta_w = log(max(gt_bbox_width,1) / anchor_width)
        
     """
-    # TODO(student): Complete this function - TEJNA
+    anchor_width = anchors[..., 2] - anchors[..., 0]
+    anchor_height = anchors[..., 3] - anchors[..., 1]
+    anchor_center_x = anchors[..., 0] + 0.5 * anchor_width
+    anchor_center_y = anchors[..., 1] + 0.5 * anchor_height
 
-    # Convert boxes from (x1, y1, x2, y2) to (center_x, center_y, width, height)
-    # Anchors
-    anchor_widths = anchors[..., 2] - anchors[..., 0]
-    anchor_heights = anchors[..., 3] - anchors[..., 1]
-    anchor_ctr_x = anchors[..., 0] + 0.5 * anchor_widths
-    anchor_ctr_y = anchors[..., 1] + 0.5 * anchor_heights
+    gt_width = gt_bboxes[..., 2] - gt_bboxes[..., 0]
+    gt_height = gt_bboxes[..., 3] - gt_bboxes[..., 1]
+    gt_center_x = gt_bboxes[..., 0] + 0.5 * gt_width
+    gt_center_y = gt_bboxes[..., 1] + 0.5 * gt_height
 
-    # Ground truth boxes
-    gt_widths = gt_bboxes[..., 2] - gt_bboxes[..., 0]
-    gt_heights = gt_bboxes[..., 3] - gt_bboxes[..., 1]
-    gt_ctr_x = gt_bboxes[..., 0] + 0.5 * gt_widths
-    gt_ctr_y = gt_bboxes[..., 1] + 0.5 * gt_heights
+    delta_center_x = (gt_center_x - anchor_center_x) / anchor_width
+    delta_center_y = (gt_center_y - anchor_center_y) / anchor_height
 
-    # Compute deltas
-    # Center coordinates
-    delta_x = (gt_ctr_x - anchor_ctr_x) / anchor_widths
-    delta_y = (gt_ctr_y - anchor_ctr_y) / anchor_heights
+    gt_width = torch.clamp(gt_width, min=1.0)
+    gt_height = torch.clamp(gt_height, min=1.0)
 
-    # Width and height
-    # First clamp the gt widths/heights to minimum of 1
-    gt_widths = torch.clamp(gt_widths, min=1.0)
-    gt_heights = torch.clamp(gt_heights, min=1.0)
+    delta_width = torch.log(gt_width / anchor_width)
+    delta_height = torch.log(gt_height / anchor_height)
 
-    # Then compute log ratios
-    delta_w = torch.log(gt_widths / anchor_widths)
-    delta_h = torch.log(gt_heights / anchor_heights)
-
-    return torch.stack([delta_x, delta_y, delta_w, delta_h], dim=-1)
+    return torch.stack([delta_center_x, delta_center_y, delta_width, delta_height], dim=-1)
 
 def apply_bbox_deltas(boxes, deltas):
     """
@@ -184,36 +164,25 @@ def apply_bbox_deltas(boxes, deltas):
         boxes: (N, 4) tensor of (x1, y1, x2, y2)
         
     """
-    # Extract widths and heights of anchor boxes
-    widths = boxes[:, 2] - boxes[:, 0]
-    heights = boxes[:, 3] - boxes[:, 1]
-    ctr_x = boxes[:, 0] + 0.5 * widths
-    ctr_y = boxes[:, 1] + 0.5 * heights
+    w = boxes[:, 2] - boxes[:, 0]
+    h = boxes[:, 3] - boxes[:, 1]
+    cx = boxes[:, 0] + 0.5 * w
+    cy = boxes[:, 1] + 0.5 * h
 
-    # Extract predicted deltas
-    dx = deltas[:, 0]
-    dy = deltas[:, 1]
-    dw = deltas[:, 2]
-    dh = deltas[:, 3]
+    dx, dy, dw, dh = deltas[:, 0], deltas[:, 1], deltas[:, 2], deltas[:, 3]
 
-    # Apply deltas to center coordinates
-    pred_ctr_x = dx * widths + ctr_x
-    pred_ctr_y = dy * heights + ctr_y
+    new_cx = dx * w + cx
+    new_cy = dy * h + cy
+    new_w = torch.exp(dw) * w
+    new_h = torch.exp(dh) * h
 
-    # Apply deltas to width and height
-    pred_w = torch.exp(dw) * widths
-    pred_h = torch.exp(dh) * heights
+    x1 = new_cx - 0.5 * new_w
+    y1 = new_cy - 0.5 * new_h
+    x2 = new_cx + 0.5 * new_w
+    y2 = new_cy + 0.5 * new_h
 
-    # Convert back to (x1, y1, x2, y2) format
-    pred_x1 = pred_ctr_x - 0.5 * pred_w
-    pred_y1 = pred_ctr_y - 0.5 * pred_h
-    pred_x2 = pred_ctr_x + 0.5 * pred_w
-    pred_y2 = pred_ctr_y + 0.5 * pred_h
-
-    # Stack to get final boxes
-    new_boxes = torch.stack([pred_x1, pred_y1, pred_x2, pred_y2], dim=1)
-
-    return new_boxes
+    result_boxes = torch.stack([x1, y1, x2, y2], dim=1)
+    return result_boxes
 
 def nms(bboxes, scores, threshold=0.5):
     """
@@ -231,35 +200,24 @@ def nms(bboxes, scores, threshold=0.5):
 
     make sure that the indices tensor that you return is of type int or long(since it will be used as an index to select the relevant bboxes to output)
     """
-    # TODO(student): Complete this function - TEJNA
-    # If no boxes, return empty tensor
     if bboxes.shape[0] == 0:
         return torch.tensor([], dtype=torch.int64, device=bboxes.device)
 
-    # Get indices that would sort scores in descending order
-    _, order = scores.sort(0, descending=True)
+    _, sorted_idx = scores.sort(0, descending=True)
+    selected_indices = []
 
-    # Initialize list to keep track of indices to keep
-    keep = []
-
-    while order.numel() > 0:
-        # Pick the box with highest score
-        if order.numel() == 1:
-            keep.append(order.item())
+    while sorted_idx.numel() > 0:
+        if sorted_idx.numel() == 1:
+            selected_indices.append(sorted_idx.item())
             break
-        i = order[0]
-        keep.append(i.item())
+        top_idx = sorted_idx[0]
+        selected_indices.append(top_idx.item())
 
-        # Get IoUs of all remaining boxes with the currently selected box
-        curr_box = bboxes[i].unsqueeze(0)  # (1, 4)
-        other_boxes = bboxes[order[1:]]  # (n-1, 4)
-        ious = compute_bbox_iou(curr_box, other_boxes).squeeze(0)  # (n-1,)
+        top_box = bboxes[top_idx].unsqueeze(0)
+        remaining_boxes = bboxes[sorted_idx[1:]]
+        ious = compute_bbox_iou(top_box, remaining_boxes).squeeze(0)
 
-        # Keep only boxes with IoU less than threshold
-        mask = ious <= threshold
-        order = order[1:][mask]
+        remaining_idx = ious <= threshold
+        sorted_idx = sorted_idx[1:][remaining_idx]
 
-    # Convert to tensor
-    keep = torch.tensor(keep, dtype=torch.int64, device=bboxes.device)
-
-    return keep
+    return torch.tensor(selected_indices, dtype=torch.int64, device=bboxes.device)

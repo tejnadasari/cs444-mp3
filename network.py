@@ -58,29 +58,20 @@ class Anchors(nn.Module):
         width and height depending on the aspect ratio, so think about how you would use the aspect ratio to appropriatly scale the width and height such that w*h = (size*stride)^2 and
         aspect_ratio = h/w
         """
-        # TEJNA
         super(Anchors, self).__init__()
+        self.stride = stride
 
-        # Pre-compute anchor offsets for each combination of size and aspect ratio
         anchor_offsets = []
         for size in sizes:
-            area = (size * stride) ** 2
             for ratio in aspect_ratios:
-                # Calculate w and h that maintains area and aspect ratio
-                w = math.sqrt(area / ratio)
-                h = ratio * w
+                width = size * stride * math.sqrt(1 / ratio)
+                height = size * stride * math.sqrt(ratio)
 
-                # Calculate half-widths and half-heights for corner offsets
-                half_w = w / 2
-                half_h = h / 2
+                x1, y1, x2, y2 = -width / 2, -height / 2, width / 2, height / 2
+                anchor_offsets.append([x1, y1, x2, y2])
 
-                # Store offsets as (x1, y1, x2, y2) relative to center point
-                anchor_offsets.append([-half_w, -half_h, half_w, half_h])
+        self.anchor_offsets = torch.tensor(anchor_offsets, dtype=torch.float32)
 
-        # Convert to tensor and store
-        self.anchor_offsets = torch.tensor(anchor_offsets)
-        self.stride = stride
-    # TEJNA
     def forward(self, x):
         """
         Args:
@@ -105,37 +96,20 @@ class Anchors(nn.Module):
         """
         batch_size, _, height, width = x.shape
 
-        # Create a grid of center coordinates
-        shifts_x = torch.arange(0, width, dtype=torch.float32, device=x.device) * self.stride
-        shifts_y = torch.arange(0, height, dtype=torch.float32, device=x.device) * self.stride
-
-        # Create mesh grid of all possible centers
+        shifts_x = torch.arange(0, width, device=x.device, dtype=torch.float32) * self.stride
+        shifts_y = torch.arange(0, height, device=x.device, dtype=torch.float32) * self.stride
         shift_y, shift_x = torch.meshgrid(shifts_y, shifts_x, indexing='ij')
-        shift_x = shift_x.reshape(-1)
-        shift_y = shift_y.reshape(-1)
 
-        # Combine shifts for all center points
-        shifts = torch.stack([shift_x, shift_y, shift_x, shift_y], dim=1)
+        shifts = torch.stack((shift_x.reshape(-1), shift_y.reshape(-1), shift_x.reshape(-1), shift_y.reshape(-1)),
+                             dim=1)
 
-        # Move anchor_offsets to the correct device
         anchor_offsets = self.anchor_offsets.to(x.device)
+        shifts = shifts.view(-1, 1, 4)
+        anchor_offsets = anchor_offsets.view(1, -1, 4)
 
-        # Add anchor offsets to each center point
-        # K = height * width (number of centers)
-        # A = number of anchors per center (9 in this case)
-        K = shifts.shape[0]
-        A = anchor_offsets.shape[0]
-
-        # Reshape shifts to (K, 1, 4) and anchor_offsets to (1, A, 4)
-        shifts = shifts.view(K, 1, 4)
-        anchor_offsets = anchor_offsets.view(1, A, 4)
-
-        # Broadcast add to get all anchors
-        # Result shape: (K, A, 4)
         anchors = shifts + anchor_offsets
 
-        # Reshape to match expected output format (B, A*4, H, W)
-        anchors = anchors.reshape(height, width, -1).permute(2, 0, 1).contiguous()
+        anchors = anchors.view(height, width, -1).permute(2, 0, 1).contiguous()
         anchors = anchors.unsqueeze(0).repeat(batch_size, 1, 1, 1)
 
         return anchors
