@@ -62,8 +62,6 @@ def main(_):
                                 preload_images=FLAGS.preload_images > 0,
                                 transform=transforms.Compose([
                                     Normalizer(),
-                                    transforms.RandomHorizontalFlip(p=0.5),  # Added
-                                    transforms.ColorJitter(brightness=0.2, contrast=0.2),  # Added
                                     Resizer()
                                 ]))
     dataset_val = CocoDataset('val', seed=0,
